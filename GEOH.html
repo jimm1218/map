@@ -4,38 +4,26 @@
   <meta charset="UTF-8" />
   <title>台中西屯商圈 POI 地圖</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
-    html,
-    body,
-    #map {
+    html, body, #map {
       height: 100%;
       margin: 0;
       padding: 0;
     }
-    .legend {
+    .legend, .slider-box, .search-box, .results-box {
       position: fixed;
-      bottom: 20px;
-      left: 20px;
       background: white;
       padding: 10px;
       border: 1px solid #999;
+      z-index: 999;
       font-size: 14px;
-      z-index: 999;
     }
-    .slider-box {
-      position: fixed;
-      top: 20px;
-      left: 20px;
-      background: white;
-      padding: 10px;
-      border: 1px solid #999;
-      z-index: 999;
-    }
+    .legend { bottom: 20px; left: 20px; }
+    .slider-box { top: 20px; left: 20px; }
+    .search-box { top: 20px; right: 20px; }
+    .results-box { top: 100px; right: 20px; max-height: 200px; overflow-y: auto; width: 200px; }
   </style>
 </head>
 <body>
@@ -47,130 +35,132 @@
     <span style="color:purple;">🟪 百貨</span><br />
     <span style="color:green;">🟩 停車場</span><br />
     <span style="color:blue;">🟦 商辦</span><br />
-    <span style="color:red;">🟥 便利商店</span>
+    <span style="color:red;">🟥 便利商店</span><br />
+    <span style="color:black; background:yellow; padding:1px 4px;">🔥 火鍋/燒肉</span>
   </div>
 
   <div class="slider-box">
-    <label for="radiusSlider"
-      >📏 查詢半徑 (公尺): <span id="radiusValue">1200</span></label
-    ><br />
-    <input
-      type="range"
-      min="100"
-      max="3000"
-      step="100"
-      value="1200"
-      id="radiusSlider"
-    />
+    <label for="radiusSlider">📏 查詢半徑 (公尺): <span id="radiusValue">1200</span></label><br />
+    <input type="range" min="100" max="3000" step="100" value="1200" id="radiusSlider" />
+  </div>
+
+  <div class="search-box">
+    🔍 搜尋關鍵字：<br />
+    <input type="text" id="searchInput" placeholder="例如：火鍋" />
+    <button onclick="searchPOIs()">搜尋</button>
+  </div>
+
+  <div class="results-box">
+    <b>📋 搜尋結果</b>
+    <ul id="resultList"></ul>
   </div>
 
   <script>
-    // 預設值
     let center = [24.1736, 120.6095];
     let radius = 1200;
-
-    // 類型與顏色對應
     const colorMap = {
       餐飲: "orange",
       百貨: "purple",
       停車場: "green",
       商辦: "blue",
-      便利商店: "red",
+      便利商店: "red"
     };
 
     let poisGeo = null;
-
-    // 初始化地圖
     const map = L.map("map").setView(center, 15);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-    }).addTo(map);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
 
-    // 拖曳中心點標記
-    const centerMarker = L.marker(center, { draggable: true })
-      .addTo(map)
-      .bindPopup("拖曳我改變中心點")
-      .openPopup();
+    const centerMarker = L.marker(center, { draggable: true }).addTo(map)
+      .bindPopup("拖曳我改變中心點").openPopup();
 
-    // 初始化圓形Buffer
-    let circle = L.circle(center, {
-      radius: radius,
-      color: "red",
-      fillOpacity: 0.1,
-    }).addTo(map);
-
-    // POI圖層群組
+    let circle = L.circle(center, { radius: radius, color: "red", fillOpacity: 0.1 }).addTo(map);
     let poiLayer = L.layerGroup().addTo(map);
+    let searchLayer = L.layerGroup().addTo(map); // 額外搜尋圖層
 
-    // 更新 POI 與圓形範圍
     function updatePOIs() {
-      if (!poisGeo) {
-        console.log("poisGeo 尚未載入");
-        return;
-      }
-
+      if (!poisGeo) return;
       poiLayer.clearLayers();
-
-      // 確保 center 是 LatLng 物件
       const centerPoint = L.latLng(center[0], center[1]);
-
-      // 更新圓形位置與半徑
       circle.setLatLng(centerPoint);
       circle.setRadius(radius);
 
-      console.log("中心點：", centerPoint.toString(), "半徑：", radius);
-      console.log("總POI數：", poisGeo.features.length);
-
-      let countInRadius = 0;
-
-      poisGeo.features.forEach((f) => {
-        if (!f.geometry || !f.geometry.coordinates) return;
-
-        // GeoJSON 格式是 [經度, 緯度]
+      poisGeo.features.forEach(f => {
+        if (!f.geometry) return;
         const [lon, lat] = f.geometry.coordinates;
-        const d = centerPoint.distanceTo(L.latLng(lat, lon));
-
+        const d = centerPoint.distanceTo([lat, lon]);
         if (d <= radius) {
-          countInRadius++;
-
           const type = f.properties.type;
           const name = f.properties.name || "無名稱";
           const addr = f.properties.address || "無地址";
           const color = colorMap[type] || "gray";
 
           const marker = L.circleMarker([lat, lon], {
-            radius: 6,
-            color: color,
-            fillColor: color,
-            fillOpacity: 0.8,
+            radius: 6, color, fillColor: color, fillOpacity: 0.8
           }).bindPopup(`<b>${name}</b><br>${type}<br>${addr}`);
-
           poiLayer.addLayer(marker);
         }
       });
-
-      console.log("範圍內 POI 數量：", countInRadius);
     }
 
-    // 載入 pois.geojson
+    // 搜尋功能
+    function searchPOIs() {
+      const keyword = document.getElementById("searchInput").value.trim();
+      const centerPoint = L.latLng(center[0], center[1]);
+      const resultList = document.getElementById("resultList");
+      resultList.innerHTML = "";
+      searchLayer.clearLayers();
+
+      if (!keyword || !poisGeo) return;
+
+      const resultNames = new Set();
+
+      poisGeo.features.forEach(f => {
+        if (!f.geometry || !f.properties) return;
+        const [lon, lat] = f.geometry.coordinates;
+        const d = centerPoint.distanceTo([lat, lon]);
+
+        const name = f.properties.name || "";
+        const addr = f.properties.address || "";
+        const fulltext = name + " " + addr;
+
+        if (d <= radius && fulltext.includes(keyword)) {
+          resultNames.add(name);
+          const marker = L.circleMarker([lat, lon], {
+            radius: 8,
+            color: "black",
+            fillColor: "yellow",
+            fillOpacity: 0.9
+          }).bindPopup(`<b>${name}</b><br>${addr}<br>(關鍵字命中)`);
+          searchLayer.addLayer(marker);
+        }
+      });
+
+      if (resultNames.size === 0) {
+        resultList.innerHTML = "<li>❌ 找不到符合項目</li>";
+      } else {
+        [...resultNames].forEach(name => {
+          const li = document.createElement("li");
+          li.textContent = name;
+          resultList.appendChild(li);
+        });
+      }
+    }
+
+    // 載入資料
     fetch("pois.geojson")
-      .then((res) => res.json())
-      .then((data) => {
+      .then(res => res.json())
+      .then(data => {
         poisGeo = data;
         updatePOIs();
       })
-      .catch((err) => {
-        console.error("載入 pois.geojson 失敗:", err);
-      });
+      .catch(err => console.error("載入失敗:", err));
 
-    // 拖曳中心點後更新並同步地圖視角
-    centerMarker.on("dragend", function (e) {
+    centerMarker.on("dragend", e => {
       center = [e.target.getLatLng().lat, e.target.getLatLng().lng];
       map.setView(center);
       updatePOIs();
     });
 
-    // 調整滑桿後更新
     document.getElementById("radiusSlider").addEventListener("input", function () {
       radius = parseInt(this.value);
       document.getElementById("radiusValue").innerText = radius;
